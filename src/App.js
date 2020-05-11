@@ -1,134 +1,192 @@
-import React from 'react'
-import * as BooksAPI from './BooksAPI'
-import './App.css'
-import Shelf from './Shelf'
-import SearchComponent from './SearchComponent'
+import React from "react";
+import * as BooksAPI from "./BooksAPI";
+import "./App.css";
+import SearchComponent from "./SearchComponent";
+import Rack from "./Rack";
+import { Route } from "react-router-dom";
+import Loader from "./Loader";
 
 class BooksApp extends React.Component {
   state = {
-    showSearchPage: false
-  }
+    connectionFlag: false,
+  };
 
-  componentDidMount() {
+  getAlltToState = () => {
     BooksAPI.getAll()
       .then((books) => {
-
         let wantToRead = [],
           read = [],
-          currentlyReading = []
+          currentlyReading = [];
 
         books.map((book) => {
-          const { shelf } = book
-
+          const { shelf } = book;
           switch (shelf) {
-            case 'currentlyReading':
-              currentlyReading.push(book)
-              return null
-            case 'wantToRead':
-              wantToRead.push(book)
-              return null
-            case 'read':
-              read.push(book)
-              return null
+            case "currentlyReading":
+              currentlyReading.push(book);
+              return null;
+            case "wantToRead":
+              wantToRead.push(book);
+              return null;
+            case "read":
+              read.push(book);
+              return null;
             default:
-              return null
+              return null;
           }
-        })
+        });
 
         this.setState({
           currentlyReading,
           wantToRead,
-          read
-        })
+          read,
+          searchResult: [],
+          connectionFlag: false,
+        });
       })
-      .catch( (err) => {
-        console.log("Error fetching data", err)
-      })
+      .catch((err) => {
+        console.log("Error fetching data", err);
+        this.setState({ connectionFlag: true });
+      });
+  };
+
+  findBookShelf(bookId) {
+    const allBooks = [
+      ...this.state.currentlyReading,
+      ...this.state.wantToRead,
+      ...this.state.read,
+    ];
+
+    let bookRec = allBooks.filter((book) => book.id === bookId);
+
+    // if book already at any shelf return shelf name else return 'none'
+    return bookRec.length !== 0 ? bookRec[0].shelf : "none";
   }
 
+  findBooks = (txtInput) => {
+    txtInput
+      ? BooksAPI.search(txtInput)
+          .then((books) => {
+            if (books.error) {
+              this.setState({
+                searchResult: [],
+              });
+              return;
+            }
+            let newBooks = books.map((book) => {
+              //assign current shelf to every book
+              book.shelf = this.findBookShelf(book.id);
+              return book;
+            });
 
+            this.setState({ searchResult: newBooks });
+          })
+          .catch((err) => {
+            console.log("Error fetching data", err);
+            this.setState({ connectionFlag: true });
+          })
+      : this.setState({
+          searchResult: [],
+        });
+  };
 
-  shelfChangeHandler = (elementId, bookId, currentShelf, newShelf) => {
-    let tempCurrentShelf = [...this.state[currentShelf]]
-    let tempNewShelf = []
+  shelfChangeHandler = (book, newShelf) => {
+    let previousShelf = book.shelf;
 
-    BooksAPI.update({ id: bookId }, newShelf)
-      .then((updatedRec) => {
-        console.log("Book updated at backend")
-        if (newShelf !== 'none') {
-          tempNewShelf = [...this.state[newShelf]]
+    let currentShelfBooksUpdated =
+      previousShelf !== "none"
+        ? this.state[previousShelf].filter((rec) => rec.id !== book.id)
+        : null;
 
-          tempCurrentShelf[elementId] = {
-            ...tempCurrentShelf[elementId],
-            shelf: newShelf
-          }
+    book.shelf = newShelf;
 
-          tempNewShelf.push(tempCurrentShelf[elementId])
+    //optimistic updates for better user experience
+    if (newShelf !== "none" && previousShelf !== "none") {
+      this.setState((prevState) => ({
+        [previousShelf]: currentShelfBooksUpdated,
+        [newShelf]: [...prevState[newShelf], book],
+      }));
+    } else if (previousShelf === "none") {
+      this.setState((prevState) => ({
+        [newShelf]: [...prevState[newShelf], book],
+      }));
+    } else if (newShelf === "none") {
+      this.setState({ [previousShelf]: currentShelfBooksUpdated });
+    }
+
+    BooksAPI.update(book, newShelf)
+      .then((data) => {
+        console.log("Book shelf changed and updated at server", data);
+      })
+      .catch((err) => {
+        console.log("Error updating shelf", err);
+
+        //  In case of failure response from server following will revert
+        //  to prev state because was optimistic updates
+
+        let currentShelfBooksUpdated =
+          newShelf !== "none"
+            ? this.state[newShelf].filter((rec) => rec.id !== book.id)
+            : null;
+
+        book.shelf = previousShelf;
+
+        if (newShelf !== "none" && previousShelf !== "none") {
+          this.setState((prevState) => ({
+            [newShelf]: currentShelfBooksUpdated,
+            [previousShelf]: [...prevState[previousShelf], book],
+          }));
+        } else if (previousShelf === "none") {
+          this.setState({
+            [newShelf]: currentShelfBooksUpdated,
+          });
+        } else if (newShelf === "none") {
+          this.setState((prevState) => ({
+            [previousShelf]: [...prevState[previousShelf], book],
+          }));
         }
+      });
+  };
 
-        tempCurrentShelf.splice(elementId, 1)
-
-        this.setState((prevState) => ({
-          ...prevState,
-          [currentShelf]: tempCurrentShelf,
-          [newShelf]: (newShelf !== 'none') ? tempNewShelf : prevState[newShelf],
-        }))
-      })
-      .catch((err) => console.log("Error updating on server", err))
+  componentDidMount() {
+    this.getAlltToState();
   }
-
-
-
 
   render() {
     return (
-      <div className="app" >
-        {
-          this.state.showSearchPage ? (
-            <SearchComponent />
-          ) : (
-              <div className="list-books">
-                <div className="list-books-title">
-                  <h1>MyReads</h1>
-                </div>
-                <div className="list-books-content">
-                  {
-                    (!this.state.currentlyReading) ?
-                      (<div>
-                        <div className="bookshelf">
-                          <h2 className="bookshelf-title">Loading data, please wait...</h2>
-                        </div>
-                      </div>)
-                      :
-                      <div>
-                        <Shelf
-                          shelf='Currently Reading'
-                          books={this.state.currentlyReading}
-                          shelfChangeHandler={this.shelfChangeHandler}
-                        />
-                        <Shelf
-                          shelf='Want to Read'
-                          books={this.state.wantToRead}
-                          shelfChangeHandler={this.shelfChangeHandler}
-                        />
-                        <Shelf
-                          shelf='Read'
-                          books={this.state.read}
-                          shelfChangeHandler={this.shelfChangeHandler}
-                        />
-                      </div>
+      <div className="list-books">
+        {this.state.connectionFlag ? (
+          <Loader msg="Unable to load data, please try again later" />
+        ) : (
+          <div className="app">
+            <Route
+              exact
+              path="/"
+              render={() => (
+                <Rack
+                  shelfChangeHandler={this.shelfChangeHandler}
+                  currentlyReading={this.state.currentlyReading}
+                  wantToRead={this.state.wantToRead}
+                  read={this.state.read}
+                />
+              )}
+            />
 
-                  }
-                </div>
-                <div className="open-search">
-                  <button onClick={() => this.setState({ showSearchPage: true })}>Add a book</button>
-                </div>
-              </div>
-            )
-        }
+            <Route
+              exact
+              path="/search"
+              render={() => (
+                <SearchComponent
+                  findBooks={this.findBooks}
+                  searchResult={this.state.searchResult}
+                  shelfChangeHandler={this.shelfChangeHandler}
+                />
+              )}
+            />
+          </div>
+        )}
       </div>
-    )
+    );
   }
 }
 
-export default BooksApp
+export default BooksApp;
